@@ -124,8 +124,8 @@ async function signIpa(workPath) {
                 BUNDLE_ID = line.replace(/^.*BundleId:\s*/, '').trim();
             }
 
-            if (line.includes('BundleVersion:')) {
-                BUNDLE_VER = line.replace(/^.*BundleVersion:\s*/, '').trim();
+            if (line.includes('BundleVer:')) {
+                BUNDLE_VER = line.replace(/^.*BundleVer:\s*/, '').trim();
             }
         }
 
