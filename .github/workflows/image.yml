@@ -1,0 +1,40 @@
+name: Create and publish a container image
+on:
+  push:
+    branches: ['master']
+
+env:
+  REGISTRY: ghcr.io/emilycsh
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Log in to the GitHub Container registry
+        uses: redhat-actions/podman-login@v1
+        with:
+         registry: ${{ env.REGISTRY }}
+         username: ${{ github.actor }}
+         password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build IOSign
+        id: build-iosign
+        uses: redhat-actions/buildah-build@v2
+        with:
+         image: iosign
+         tags: latest ${{ github.sha }}
+         context: .
+         containerfiles: |
+           Dockerfile
+      - name: Push to GitHub Container Repository iosign
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build-iosign.outputs.image }}
+          tags: ${{ steps.build-iosign.outputs.tags }}
+          registry: ${{ env.REGISTRY }}
