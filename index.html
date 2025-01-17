@@ -5,6 +5,7 @@
     <title>IPA Signing Service</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Aggiunto per la responsività -->
     <style>
+        /* Stili Generali */
         body {
             font-family: Arial, sans-serif;
             background-color: #f2f2f2;
@@ -34,8 +35,9 @@
             color: #555;
             font-size: 1em;
         }
-        input[type="text"],
-        input[type="file"] {
+        
+        /* Stili per tutti i campi di input */
+        .form-input {
             width: 100%;
             padding: 10px;
             margin-bottom: 20px;
@@ -44,9 +46,12 @@
             box-sizing: border-box;
             font-size: 1em;
         }
-        input[type="file"] {
+        /* Specifiche per il campo file */
+        input[type="file"].form-input {
             padding: 3px;
         }
+        
+        /* Stili per il bottone */
         button {
             width: 100%;
             padding: 12px;
@@ -61,11 +66,14 @@
         button:hover {
             background-color: #45a049;
         }
+        
+        /* Stili per i messaggi */
         .message {
             margin-top: 20px;
             padding: 15px;
             border-radius: 4px;
             font-size: 1em;
+            display: none;
         }
         .success {
             background-color: #dff0d8;
@@ -75,6 +83,8 @@
             background-color: #f2dede;
             color: #a94442;
         }
+        
+        /* Stili per i link */
         .links {
             margin-top: 15px;
         }
@@ -102,6 +112,8 @@
         .install-button:hover {
             background-color: #31b0d5;
         }
+        
+        /* Stili per il loader */
         .loader {
             border: 6px solid #f3f3f3;
             border-top: 6px solid #4CAF50;
@@ -144,7 +156,7 @@
             h2 {
                 font-size: 1.2em;
             }
-            label, input[type="text"], input[type="file"], button, .install-button, .links a {
+            label, .form-input, button, .install-button, .links a {
                 font-size: 0.9em;
             }
             .loader {
@@ -160,17 +172,18 @@
         <h2>IPA Signing Service</h2>
         <form id="signForm">
             <label for="ipaFile">Upload IPA File:</label>
-            <input type="file" id="ipaFile" name="file" accept=".ipa" required>
+            <input type="file" id="ipaFile" name="file" accept=".ipa" required class="form-input">
 
             <label for="udid">Device UDID:</label>
-            <input type="text" id="udid" name="udid" placeholder="Enter your device UDID" required autocomplete="username">
+            <!-- Campo modificato a type="password" con autocomplete="current-password" -->
+            <input type="password" id="udid" name="udid" placeholder="Enter your device UDID" required autocomplete="current-password" class="form-input">
 
             <button type="submit">Sign IPA</button>
         </form>
 
         <div class="loader" id="loader"></div>
 
-        <div id="message" class="message" style="display: none;"></div>
+        <div id="message" class="message"></div>
     </div>
 
     <script>
