@@ -15,11 +15,6 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY package*.json ./
-
-RUN npm install --production
-COPY server.js .
-COPY index.html .
 
 RUN git clone https://github.com/zhlynn/zsign.git
 RUN cd zsign && \
@@ -29,6 +24,12 @@ RUN cd zsign && \
     cmake .. && \
     make && \
     cp zsign /zsign
+
+COPY package*.json ./
+
+RUN npm install --production
+COPY server.js .
+COPY index.html .
 
 ENV PORT=3000
 ENV OTAPROV_PATH=/ota.mobileprovision
@@ -40,4 +41,5 @@ ENV WORK_PATH=/work
 EXPOSE 3000
 
 # Define the command to run the server
+STOPSIGNAL SIGKILL
 CMD ["node", "server.js"]
