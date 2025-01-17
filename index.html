@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <title>IPA Signing Service</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Aggiunto per la responsività -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        /* Stili Generali */
+        /* General Styles */
         body {
             font-family: Arial, sans-serif;
             background-color: #f2f2f2;
@@ -14,7 +14,7 @@
         }
         .container {
             max-width: 600px;
-            width: 90%; /* Modificato per adattarsi a schermi più piccoli */
+            width: 90%;
             margin: 50px auto;
             background-color: #fff;
             padding: 20px 30px 40px 30px;
@@ -24,7 +24,7 @@
         h2 {
             text-align: center;
             color: #333;
-            font-size: 1.8em; /* Utilizzo di unità relative */
+            font-size: 1.8em;
         }
         form {
             margin-top: 20px;
@@ -33,10 +33,8 @@
             display: block;
             margin-bottom: 8px;
             color: #555;
-            font-size: 1em;
         }
-        
-        /* Stili per tutti i campi di input */
+
         .form-input {
             width: 100%;
             padding: 10px;
@@ -44,14 +42,12 @@
             border: 1px solid #ccc;
             border-radius: 4px;
             box-sizing: border-box;
-            font-size: 1em;
         }
-        /* Specifiche per il campo file */
+
         input[type="file"].form-input {
             padding: 3px;
         }
-        
-        /* Stili per il bottone */
+
         button {
             width: 100%;
             padding: 12px;
@@ -66,8 +62,7 @@
         button:hover {
             background-color: #45a049;
         }
-        
-        /* Stili per i messaggi */
+
         .message {
             margin-top: 20px;
             padding: 15px;
@@ -83,8 +78,7 @@
             background-color: #f2dede;
             color: #a94442;
         }
-        
-        /* Stili per i link */
+
         .links {
             margin-top: 15px;
         }
@@ -93,7 +87,6 @@
             margin-bottom: 8px;
             color: #337ab7;
             text-decoration: none;
-            font-size: 1em;
         }
         .links a:hover {
             text-decoration: underline;
@@ -112,8 +105,7 @@
         .install-button:hover {
             background-color: #31b0d5;
         }
-        
-        /* Stili per il loader */
+
         .loader {
             border: 6px solid #f3f3f3;
             border-top: 6px solid #4CAF50;
@@ -129,43 +121,19 @@
             100% { transform: rotate(360deg); }
         }
 
-        /* Media Queries per migliorare la responsività */
-        @media (max-width: 600px) {
-            .container {
-                padding: 15px 20px 30px 20px;
-                margin: 20px auto;
-            }
-            h2 {
-                font-size: 1.5em;
-            }
-            button, .install-button {
-                font-size: 0.9em;
-                padding: 10px;
-            }
-            .loader {
-                width: 30px;
-                height: 30px;
-                border-width: 4px;
-            }
+        #qrCode {
+            margin-top: 20px;
+            text-align: center;
         }
 
-        @media (max-width: 400px) {
-            .container {
-                padding: 10px 15px 20px 15px;
-            }
-            h2 {
-                font-size: 1.2em;
-            }
-            label, .form-input, button, .install-button, .links a {
-                font-size: 0.9em;
-            }
-            .loader {
-                width: 25px;
-                height: 25px;
-                border-width: 3px;
-            }
+        #qrCodeText {
+            text-align: center;
+            font-size: 1em;
+            color: #555;
+            margin-bottom: 10px;
         }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -175,7 +143,6 @@
             <input type="file" id="ipaFile" name="file" accept=".ipa" required class="form-input">
 
             <label for="udid">Device UDID:</label>
-            <!-- Campo modificato a type="password" con autocomplete="current-password" -->
             <input type="password" id="udid" name="udid" placeholder="Enter your device UDID" required autocomplete="current-password" class="form-input">
 
             <button type="submit">Sign IPA</button>
@@ -190,12 +157,28 @@
         const form = document.getElementById('signForm');
         const messageDiv = document.getElementById('message');
         const loader = document.getElementById('loader');
+        const qrCodeContainer = document.getElementById('qrCode');
+
+        const isAppleDevice = () => {
+            const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+            return /iPhone|iPad|iPod|AppleWatch|Vision/i.test(userAgent);
+        };
+
+        const isSafari = () => {
+            const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+            const isSafariUA = /Safari/.test(userAgent);
+            const isThirdParty = /CriOS|FxiOS|EdgiOS|OPiOS|YaBrowser|DuckDuckGo/.test(userAgent);
+            const isSafariUnique = !!window.safari && safari.pushNotification;
+
+            return isSafariUA && !isThirdParty && isSafariUnique;
+        };
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             messageDiv.style.display = 'none';
             messageDiv.className = 'message';
             loader.style.display = 'block';
+            messageDiv.innerHTML = '';
 
             const formData = new FormData(form);
 
@@ -210,20 +193,50 @@
 
                 if (response.ok) {
                     messageDiv.classList.add('success');
+
+                    const isThirdParty = isAppleDevice() && !isSafari();
+                    let installURL = `itms-services://?action=download-manifest&url=${result.ota_url}`;
+
+                    if (isThirdParty) {
+                        installURL = `x-safari-${result.install_url}`;
+                    }
+
                     messageDiv.innerHTML = `
                         <strong>${result.message}</strong>
                         <div class="links">
                             <a href="${result.ipa_url}" target="_blank">Download Signed IPA</a>
                             <a href="${result.ota_url}" target="_blank">Download OTA Plist</a>
                         </div>
-                        <a href="itms-services://?action=download-manifest&url=${encodeURIComponent(result.ota_url)}" class="install-button">Install on Device</a>
                     `;
+
+                    if (isAppleDevice()) {
+                        messageDiv.innerHTML += `
+                            <a href="${installURL}" class="install-button">Install on Device</a>
+                        `;
+                    } else {
+                        messageDiv.innerHTML += `
+                            <strong>Scan this QR code with the iOS Camera app to install the IPA</strong>
+                            <div id="qrCode"></div>
+                        `;
+
+                        new QRCode(document.getElementById("qrCode"), {
+                            text: installURL,
+                            width: 200,
+                            height: 200,
+                            colorDark: "#000000",
+                            colorLight: "#ffffff",
+                            correctLevel: QRCode.CorrectLevel.M
+                        });
+                    }
                 } else {
                     messageDiv.classList.add('error');
                     messageDiv.textContent = result.message || 'An error occurred while processing your request.';
+                    messageDiv.style.display = 'block';
                 }
 
-                messageDiv.style.display = 'block';
+                if (response.ok) {
+                    messageDiv.style.display = 'block';
+                }
             } catch (error) {
                 loader.style.display = 'none';
                 messageDiv.classList.add('error');

@@ -231,6 +231,21 @@ app.get('/ota/:bundleId/:bundleVersion/:ipaFileName', async (req, res, next) => 
     }
 });
 
+app.get('/install/:bundleId/:bundleVersion/:ipaFileName', (req, res) => {
+    const { bundleId, bundleVersion, ipaFileName } = req.params;
+
+    if (!bundleId || !bundleVersion || !ipaFileName) {
+        return res.status(400).send('Missing required parameters.');
+    }
+
+    const encodedBundleId = encodeURIComponent(bundleId);
+    const encodedBundleVersion = encodeURIComponent(bundleVersion);
+    const encodedIpaFileName = encodeURIComponent(ipaFileName);
+
+    const targetUrl = encodeURI(`itms-services://?action=download-manifest&url=${URL}/ota/${encodedBundleId}/${encodedBundleVersion}/${encodedIpaFileName}`);
+    res.redirect(targetUrl);
+});
+
 app.post('/sign', upload.single('file'), async (req, res, next) => {
     try {
         const udid = req.body.udid;
@@ -296,7 +311,8 @@ app.post('/sign', upload.single('file'), async (req, res, next) => {
         res.status(200).send({
             message: 'IPA signed successfully.',
             ipa_url: encodeURI(`${URL}/public/${outputIPAName}`),
-            ota_url: encodeURI(`${URL}/ota/${result.BUNDLE_ID}/${result.BUNDLE_VER}/${outputIPAName}`)
+            ota_url: encodeURI(`${URL}/ota/${result.BUNDLE_ID}/${result.BUNDLE_VER}/${outputIPAName}`),
+            install_url: encodeURI(`${URL}/install/${result.BUNDLE_ID}/${result.BUNDLE_VER}/${outputIPAName}`)
         });
     } catch (err) {
         console.error('Generic error in /sign endpoint:', err);
