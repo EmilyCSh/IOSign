@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>IPA Signing Service</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f2f2f2;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 50px auto;
+            background-color: #fff;
+            padding: 20px 30px 40px 30px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h2 {
+            text-align: center;
+            color: #333;
+        }
+        form {
+            margin-top: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+        }
+        input[type="text"],
+        input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        input[type="file"] {
+            padding: 3px;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .message {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .links {
+            margin-top: 15px;
+        }
+        .links a {
+            display: block;
+            margin-bottom: 8px;
+            color: #337ab7;
+            text-decoration: none;
+        }
+        .links a:hover {
+            text-decoration: underline;
+        }
+        .install-button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #5bc0de;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .install-button:hover {
+            background-color: #31b0d5;
+        }
+        .loader {
+            border: 6px solid #f3f3f3;
+            border-top: 6px solid #4CAF50;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>IPA Signing Service</h2>
+        <form id="signForm">
+            <label for="ipaFile">Upload IPA File:</label>
+            <input type="file" id="ipaFile" name="file" accept=".ipa" required>
+
+            <label for="udid">Device UDID:</label>
+            <input type="text" id="udid" name="udid" placeholder="Enter your device UDID" required>
+
+            <button type="submit">Sign IPA</button>
+        </form>
+
+        <div class="loader" id="loader"></div>
+
+        <div id="message" class="message" style="display: none;"></div>
+    </div>
+
+    <script>
+        const form = document.getElementById('signForm');
+        const messageDiv = document.getElementById('message');
+        const loader = document.getElementById('loader');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            messageDiv.style.display = 'none';
+            messageDiv.className = 'message';
+            loader.style.display = 'block';
+
+            const formData = new FormData(form);
+
+            try {
+                const response = await fetch('/sign', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                loader.style.display = 'none';
+
+                if (response.ok) {
+                    messageDiv.classList.add('success');
+                    messageDiv.innerHTML = `
+                        <strong>${result.message}</strong>
+                        <div class="links">
+                            <a href="${result.ipa_url}" target="_blank">Download Signed IPA</a>
+                            <a href="${result.ota_url}" target="_blank">Download OTA Plist</a>
+                        </div>
+                        <a href="itms-services://?action=download-manifest&url=${encodeURIComponent(result.ota_url)}" class="install-button">Install on Device</a>
+                    `;
+                } else {
+                    messageDiv.classList.add('error');
+                    messageDiv.textContent = result.message || 'An error occurred while processing your request.';
+                }
+
+                messageDiv.style.display = 'block';
+            } catch (error) {
+                loader.style.display = 'none';
+                messageDiv.classList.add('error');
+                messageDiv.textContent = 'An unexpected error occurred. Please try again later.';
+                messageDiv.style.display = 'block';
+                console.error('Error:', error);
+            }
+        });
+    </script>
+</body>
+</html>
