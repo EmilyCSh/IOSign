@@ -11,7 +11,6 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const PORT = process.env.PORT;
-const IRESIGN = path.resolve(process.env.IRESIGN_PATH);
 const OTAPROV = path.resolve(process.env.OTAPROV_PATH);
 const KEY = path.resolve(process.env.KEY_PATH);
 const PUBLIC = path.resolve(process.env.PUBLIC_PATH);
@@ -82,7 +81,7 @@ async function signIpa(workPath) {
     }
 
     const env = { ...process.env, WINEDEBUG: '-all' };
-    const command = `wine "${IRESIGN}" -m "${OTAPROV}" -k "${KEY}" -s "${workPath}"`;
+    const command = `/zsign -m "${OTAPROV}" -k "${KEY}" -s "${workPath}"`;
 
     try {
         const { stdout, stderr } = await execAsync(command, { env });

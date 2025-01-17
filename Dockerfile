@@ -1,31 +1,17 @@
-FROM node:16-buster
+FROM node:16-bookworm
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN dpkg --add-architecture i386 && \
-    apt-get update && \
+RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         software-properties-common \
         wget \
         gnupg2 \
         ca-certificates \
-        libasound2 \
-        libgtk-3-0 \
-        libnotify4 \
-        libnss3 \
-        libx11-xcb1 \
-        libxcomposite1 \
-        libxdamage1 \
-        libxrandr2 \
-        libxrender1 \
-        libxtst6 \
-        libgbm1 \
-        libfreetype6 \
-        libfontconfig1 \
-        fonts-liberation \
-        libappindicator3-1 \
-        libatk-bridge2.0-0 \
-        libgtk-3-0 \
-        wine \
+        git \
+        build-essential \
+        cmake \
+        zlib1g-dev \
+        libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -35,11 +21,16 @@ RUN npm install --production
 COPY server.js .
 COPY index.html .
 
-RUN wget https://github.com/isigner/iresign/releases/download/1.0.5/iresign_ui.windows.x86_64-1.0.5-3.zip -O iresign.zip
-RUN unzip iresign.zip -d /
+RUN git clone https://github.com/zhlynn/zsign.git
+RUN cd zsign && \
+    git reset --hard 9fd2942fa9dc5fc5ba111526686b0e4a35aff3a9 && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make && \
+    cp zsign /zsign
 
 ENV PORT=3000
-ENV IRESIGN_PATH=/iresign/iresign.exe
 ENV OTAPROV_PATH=/ota.mobileprovision
 ENV KEY_PATH=/key.p12
 ENV PUBLIC_PATH=/public
