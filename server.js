@@ -325,6 +325,29 @@ app.use((err, req, res, next) => {
     res.status(500).send({ message: 'An error occurred while processing your request.' });
 });
 
+const cleanDirectories = async () => {
+    const directories = [PUBLIC, WORK];
+    for (const dir of directories) {
+        try {
+            if (fs.existsSync(dir)) {
+                const files = await fs.promises.readdir(dir);
+                const deletePromises = files.map(file => {
+                    const filePath = path.join(dir, file);
+                    return fs.promises.rm(filePath, { recursive: true, force: true });
+                });
+                await Promise.all(deletePromises);
+                console.log(`Cleanup directory ${dir} ${new Date().toLocaleString()}.`);
+            } else {
+                console.warn(`The directory ${dir} do not exist.`);
+            }
+        } catch (error) {
+            console.error(`Error during directory ${dir} cleanup:`, error);
+        }
+    }
+};
+
+setInterval(cleanDirectories, 6 * 60 * 60 * 1000);
+
 app.listen(PORT, () => {
     console.log(`Server is listening on port ${PORT}`);
 });
