@@ -132,6 +132,35 @@
             color: #555;
             margin-bottom: 10px;
         }
+
+        /* Custom Progress Bar Styles */
+        .progress-container {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f3f3f3;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 5px;
+            position: relative;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.4s ease; /* Aumenta la durata per una transizione più fluida */
+        }
+
+        #progressPercent {
+            display: block;
+            margin-top: 5px;
+            color: #555;
+        }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -150,6 +179,15 @@
 
         <div class="loader" id="loader"></div>
 
+        <!-- Custom Progress Bar -->
+        <div class="progress-container" id="progressContainer" style="display: none;">
+            <label for="progressFill">Uploading:</label>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+            </div>
+            <span id="progressPercent">0%</span>
+        </div>
+
         <div id="message" class="message"></div>
     </div>
 
@@ -157,7 +195,13 @@
         const form = document.getElementById('signForm');
         const messageDiv = document.getElementById('message');
         const loader = document.getElementById('loader');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressPercent = document.getElementById('progressPercent');
         const qrCodeContainer = document.getElementById('qrCode');
+
+        let currentProgress = 0; // Traccia il progresso attuale
+        let targetProgress = 0;  // Traccia il progresso target
 
         const isAppleDevice = () => {
             const userAgent = navigator.userAgent || navigator.vendor || window.opera;
@@ -173,78 +217,124 @@
             return isSafariUA && !isThirdParty && isSafariUnique;
         };
 
-        form.addEventListener('submit', async (e) => {
+        form.addEventListener('submit', (e) => {
             e.preventDefault();
+            console.log('Form submission started');
             messageDiv.style.display = 'none';
             messageDiv.className = 'message';
             loader.style.display = 'block';
+            progressContainer.style.display = 'block';
+            progressFill.style.width = '0%';
+            progressPercent.textContent = '0%';
             messageDiv.innerHTML = '';
+            currentProgress = 0;
+            targetProgress = 0;
 
             const formData = new FormData(form);
 
-            try {
-                const response = await fetch('/sign', {
-                    method: 'POST',
-                    body: formData
-                });
+            // Use XMLHttpRequest to track upload progress
+            const xhr = new XMLHttpRequest();
 
-                const result = await response.json();
-                loader.style.display = 'none';
+            xhr.open('POST', '/sign', true);
 
-                if (response.ok) {
-                    messageDiv.classList.add('success');
-
-                    const isThirdParty = isAppleDevice() && !isSafari();
-                    let installURL = `itms-services://?action=download-manifest&url=${result.ota_url}`;
-
-                    if (isThirdParty) {
-                        installURL = `x-safari-${result.install_url}`;
-                    }
-
-                    messageDiv.innerHTML = `
-                        <strong>${result.message}</strong>
-                        <div class="links">
-                            <a href="${result.ipa_url}" target="_blank">Download Signed IPA</a>
-                            <a href="${result.ota_url}" target="_blank">Download OTA Plist</a>
-                        </div>
-                    `;
-
-                    if (isAppleDevice()) {
-                        messageDiv.innerHTML += `
-                            <a href="${installURL}" class="install-button">Install on Device</a>
+            // Upload progress event listener
+            xhr.upload.addEventListener('progress', (event) => {
+                if (event.lengthComputable) {
+                    if (event.loaded === event.total) {
+                        progressContainer.style.display = 'none';
+                        messageDiv.classList.remove('error', 'success');
+                        messageDiv.classList.add('success');
+                        messageDiv.innerHTML = `
+                            <strong>IPA signing is in progress. Please wait...</strong>
                         `;
+                        messageDiv.style.display = 'block';
                     } else {
-                        messageDiv.innerHTML += `
-                            <strong>Scan this QR code with the iOS Camera app to install the IPA</strong>
-                            <div id="qrCode"></div>
-                        `;
-
-                        new QRCode(document.getElementById("qrCode"), {
-                            text: installURL,
-                            width: 200,
-                            height: 200,
-                            colorDark: "#000000",
-                            colorLight: "#ffffff",
-                            correctLevel: QRCode.CorrectLevel.M
-                        });
+                        targetProgress = Math.round((event.loaded / event.total) * 100);
+                        console.log(`Progress: ${targetProgress}%`);
+                        animateProgress();
                     }
                 } else {
-                    messageDiv.classList.add('error');
-                    messageDiv.textContent = result.message || 'An error occurred while processing your request.';
-                    messageDiv.style.display = 'block';
+                    console.log('Progress not computable');
                 }
+            });
 
-                if (response.ok) {
-                    messageDiv.style.display = 'block';
+            // Server response event listener
+            xhr.onreadystatechange = function () {
+                if (xhr.readyState === XMLHttpRequest.DONE) {
+                    console.log('Upload completed');
+                    loader.style.display = 'none';
+                    progressContainer.style.display = 'none';
+                    if (xhr.status === 200) {
+                        const result = JSON.parse(xhr.responseText);
+                        messageDiv.classList.add('success');
+
+                        const isThirdParty = isAppleDevice() && !isSafari();
+                        let installURL = `itms-services://?action=download-manifest&url=${result.ota_url}`;
+
+                        if (isThirdParty) {
+                            installURL = `x-safari-${result.install_url}`;
+                        }
+
+                        messageDiv.innerHTML = `
+                            <strong>${result.message}</strong>
+                            <div class="links">
+                                <a href="${result.ipa_url}" target="_blank">Download Signed IPA</a>
+                                <a href="${result.ota_url}" target="_blank">Download OTA Plist</a>
+                            </div>
+                        `;
+
+                        if (isAppleDevice()) {
+                            messageDiv.innerHTML += `
+                                <a href="${installURL}" class="install-button">Install on Device</a>
+                            `;
+                        } else {
+                            messageDiv.innerHTML += `
+                                <strong>Scan this QR code with the iOS Camera app to install the IPA</strong>
+                                <div id="qrCode"></div>
+                            `;
+
+                            new QRCode(document.getElementById("qrCode"), {
+                                text: installURL,
+                                width: 200,
+                                height: 200,
+                                colorDark: "#000000",
+                                colorLight: "#ffffff",
+                                correctLevel: QRCode.CorrectLevel.M
+                            });
+                        }
+
+                        messageDiv.style.display = 'block';
+                    } else {
+                        const result = JSON.parse(xhr.responseText);
+                        messageDiv.classList.add('error');
+                        messageDiv.textContent = result.message || 'An error occurred while processing your request.';
+                        messageDiv.style.display = 'block';
+                    }
                 }
-            } catch (error) {
+            };
+
+            // Network error event listener
+            xhr.onerror = function () {
+                console.log('Network error occurred');
                 loader.style.display = 'none';
+                progressContainer.style.display = 'none';
                 messageDiv.classList.add('error');
-                messageDiv.textContent = 'An unexpected error occurred. Please try again later.';
+                messageDiv.textContent = 'A network error occurred. Please try again later.';
                 messageDiv.style.display = 'block';
-                console.error('Error:', error);
-            }
+            };
+
+            // Send the request
+            xhr.send(formData);
         });
+
+        function animateProgress() {
+            if (currentProgress < targetProgress) {
+                currentProgress++;
+                progressFill.style.width = `${currentProgress}%`;
+                progressPercent.textContent = `${currentProgress}%`;
+                requestAnimationFrame(animateProgress);
+            }
+        }
     </script>
 </body>
 </html>
