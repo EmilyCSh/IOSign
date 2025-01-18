@@ -242,7 +242,35 @@ app.get('/install/:bundleId/:bundleVersion/:ipaFileName', (req, res) => {
     const encodedBundleVersion = encodeURIComponent(bundleVersion);
     const encodedIpaFileName = encodeURIComponent(ipaFileName);
 
-    const targetUrl = encodeURI(`itms-services://?action=download-manifest&url=${URL}/ota/${encodedBundleId}/${encodedBundleVersion}/${encodedIpaFileName}`);
+    const userAgent = req.get('User-Agent') || '';
+    const originalUrl = 'https://' + req.get('host') + req.originalUrl;
+    let targetUrl = encodeURI(`itms-services://?action=download-manifest&url=${URL}/ota/${encodedBundleId}/${encodedBundleVersion}/${encodedIpaFileName}`);
+
+    if (!/iPhone|iPad|iPod|AppleWatch|Vision/i.test(userAgent)) {
+        // Install called on non-iOS device. Return QR
+        const qrCodeHTML = `
+            <strong>Scan this QR code with the iOS Camera app to install the IPA</strong>
+            <div id="qrCode"></div>
+
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+            <script>
+            new QRCode(document.getElementById("qrCode"), {
+                text: "${originalUrl}",
+                width: 200,
+                height: 200,
+                colorDark: "#000000",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.M
+            });
+            </script>
+        `;
+        return res.send(qrCodeHTML);
+    } else if (/CriOS|FxiOS|EdgiOS|OPiOS|YaBrowser|DuckDuckGo/.test(userAgent)) {
+        // Install called on non-Safari browser on iOS device. Try reload install URL on Safari
+        targetUrl = encodeURI(`x-safari-${originalUrl}`);
+    }
+
     res.redirect(targetUrl);
 });
 

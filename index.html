@@ -208,15 +208,6 @@
             return /iPhone|iPad|iPod|AppleWatch|Vision/i.test(userAgent);
         };
 
-        const isSafari = () => {
-            const userAgent = navigator.userAgent || navigator.vendor || window.opera;
-            const isSafariUA = /Safari/.test(userAgent);
-            const isThirdParty = /CriOS|FxiOS|EdgiOS|OPiOS|YaBrowser|DuckDuckGo/.test(userAgent);
-            const isSafariUnique = !!window.safari && safari.pushNotification;
-
-            return isSafariUA && !isThirdParty && isSafariUnique;
-        };
-
         form.addEventListener('submit', (e) => {
             e.preventDefault();
             console.log('Form submission started');
@@ -268,13 +259,6 @@
                         const result = JSON.parse(xhr.responseText);
                         messageDiv.classList.add('success');
 
-                        const isThirdParty = isAppleDevice() && !isSafari();
-                        let installURL = `itms-services://?action=download-manifest&url=${result.ota_url}`;
-
-                        if (isThirdParty) {
-                            installURL = `x-safari-${result.install_url}`;
-                        }
-
                         messageDiv.innerHTML = `
                             <strong>${result.message}</strong>
                             <div class="links">
@@ -285,7 +269,7 @@
 
                         if (isAppleDevice()) {
                             messageDiv.innerHTML += `
-                                <a href="${installURL}" class="install-button">Install on Device</a>
+                                <a href="${result.install_url}" class="install-button">Install on Device</a>
                             `;
                         } else {
                             messageDiv.innerHTML += `
@@ -294,7 +278,7 @@
                             `;
 
                             new QRCode(document.getElementById("qrCode"), {
-                                text: installURL,
+                                text: result.install_url,
                                 width: 200,
                                 height: 200,
                                 colorDark: "#000000",
