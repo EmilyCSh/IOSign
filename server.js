@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const multer  = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -10,6 +11,8 @@ const archiver = require('archiver');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
+app.use(cors());
+
 const PORT = process.env.PORT;
 const OTAPROV = path.resolve(process.env.OTAPROV_PATH);
 const KEY = path.resolve(process.env.KEY_PATH);
