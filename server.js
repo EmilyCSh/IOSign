@@ -12,13 +12,13 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 app.use(cors());
+app.set('trust proxy', true);
 
 const PORT = process.env.PORT;
 const OTAPROV = path.resolve(process.env.OTAPROV_PATH);
 const KEY = path.resolve(process.env.KEY_PATH);
 const PUBLIC = path.resolve(process.env.PUBLIC_PATH);
 const WORK = path.resolve(process.env.WORK_PATH);
-const URL = process.env.URL;
 const ZIP_COMPRESSION = parseInt(process.env.ZIP_COMPRESSION, 10);
 
 const validUdids = process.env.VALID_UDIDS ? process.env.VALID_UDIDS.split(',').map(udid => udid.trim().toUpperCase()) : [];
@@ -222,7 +222,8 @@ function createOtaPlist(ipaUrl, bundleId, bundleVersion, appTitle) {
 app.get('/ota/:bundleId/:bundleVersion/:ipaFileName', async (req, res, next) => {
     try {
         const { bundleId, bundleVersion, ipaFileName } = req.params;
-        const ipaUrl = encodeURI(`${URL}/public/${ipaFileName}`);
+        const host = `${req.protocol}://${req.get('host')}`;
+        const ipaUrl = encodeURI(`${host}/public/${ipaFileName}`);
 
         const plistContent = createOtaPlist(ipaUrl, bundleId, bundleVersion, bundleId);
 
@@ -236,6 +237,7 @@ app.get('/ota/:bundleId/:bundleVersion/:ipaFileName', async (req, res, next) => 
 
 app.get('/install/:bundleId/:bundleVersion/:ipaFileName', (req, res) => {
     const { bundleId, bundleVersion, ipaFileName } = req.params;
+    const host = `${req.protocol}://${req.get('host')}`;
 
     if (!bundleId || !bundleVersion || !ipaFileName) {
         return res.status(400).send('Missing required parameters.');
@@ -247,7 +249,7 @@ app.get('/install/:bundleId/:bundleVersion/:ipaFileName', (req, res) => {
 
     const userAgent = req.get('User-Agent') || '';
     const originalUrl = 'https://' + req.get('host') + req.originalUrl;
-    let targetUrl = encodeURI(`itms-services://?action=download-manifest&url=${URL}/ota/${encodedBundleId}/${encodedBundleVersion}/${encodedIpaFileName}`);
+    let targetUrl = encodeURI(`itms-services://?action=download-manifest&url=${host}/ota/${encodedBundleId}/${encodedBundleVersion}/${encodedIpaFileName}`);
 
     if (!/iPhone|iPad|iPod|AppleWatch|Vision/i.test(userAgent)) {
         // Install called on non-iOS device. Return QR
@@ -280,6 +282,7 @@ app.get('/install/:bundleId/:bundleVersion/:ipaFileName', (req, res) => {
 app.post('/sign', upload.single('file'), async (req, res, next) => {
     try {
         const udid = req.body.udid;
+        const host = `${req.protocol}://${req.get('host')}`;
 
         if (!udid) {
             return res.status(400).send({ message: 'Device UDID is missing.' });
@@ -341,9 +344,9 @@ app.post('/sign', upload.single('file'), async (req, res, next) => {
 
         res.status(200).send({
             message: 'IPA signed successfully.',
-            ipa_url: encodeURI(`${URL}/public/${outputIPAName}`),
-            ota_url: encodeURI(`${URL}/ota/${result.BUNDLE_ID}/${result.BUNDLE_VER}/${outputIPAName}`),
-            install_url: encodeURI(`${URL}/install/${result.BUNDLE_ID}/${result.BUNDLE_VER}/${outputIPAName}`)
+            ipa_url: encodeURI(`${host}/public/${outputIPAName}`),
+            ota_url: encodeURI(`${host}/ota/${result.BUNDLE_ID}/${result.BUNDLE_VER}/${outputIPAName}`),
+            install_url: encodeURI(`${host}/install/${result.BUNDLE_ID}/${result.BUNDLE_VER}/${outputIPAName}`)
         });
     } catch (err) {
         console.error('Generic error in /sign endpoint:', err);
