@@ -1,4 +1,4 @@
-FROM node:16-bookworm
+FROM rust:1.87-bookworm AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
@@ -14,22 +14,32 @@ RUN apt-get update && \
         libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
 RUN git clone https://github.com/zhlynn/zsign.git
 RUN cd zsign && \
     git reset --hard 9fd2942fa9dc5fc5ba111526686b0e4a35aff3a9 && \
     mkdir build && \
     cd build && \
     cmake .. && \
-    make && \
-    cp zsign /zsign
+    make
 
-COPY package*.json ./
 
-RUN npm install --production
-COPY server.js .
-COPY index.html .
+COPY . .
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+        zlib1g \
+        zip \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder zsign/build/zsign /zsign
+COPY --from=builder target/release/iosign /iosign
 
 ENV PORT=3000
 ENV OTAPROV_PATH=/ota.mobileprovision
@@ -42,4 +52,4 @@ EXPOSE 3000
 
 # Define the command to run the server
 STOPSIGNAL SIGKILL
-CMD ["node", "server.js"]
+CMD ["/iosign"]
