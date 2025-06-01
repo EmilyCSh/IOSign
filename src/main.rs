@@ -131,7 +131,12 @@ async fn inject_base_url(mut req: Request, next: Next) -> Response {
         }
     };
 
-    let protocol = if req.uri().scheme_str().unwrap_or("http") == "https" {
+    let protocol = if headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("http")
+        == "https"
+    {
         "https"
     } else {
         "http"
