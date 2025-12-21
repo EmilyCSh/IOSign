@@ -96,6 +96,7 @@ async fn sign_ipa(
     };
 
     if !combined_output.contains("Signed OK!") {
+        println!("Zsign error: {}", combined_output);
         return Err("Sign error".into());
     }
 
@@ -280,14 +281,11 @@ async fn install_handler(
     Redirect::temporary(&target_url).into_response()
 }
 
-async fn sign_handler(
+async fn init_upload_handler(
     Extension(config): Extension<Config>,
-    Extension(base_url): Extension<String>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let mut udid = None;
-    let mut file_bytes = None;
-    let mut original_filename = None;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
         (
@@ -309,20 +307,7 @@ async fn sign_handler(
                     Json(json!({ "message": format!("Error reading udid field: {}", e) })),
                 )
             })?;
-
             udid = Some(text.trim().to_uppercase());
-        } else if name == "file" {
-            if let Some(filename) = field.file_name() {
-                original_filename = Some(filename.to_string());
-            }
-
-            let bytes = field.bytes().await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "message": format!("Error reading file field: {}", e) })),
-                )
-            })?;
-            file_bytes = Some(bytes);
         }
     }
 
@@ -330,7 +315,7 @@ async fn sign_handler(
         Some(u) => u,
         None => {
             return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::BAD_REQUEST,
                 Json(json!({ "message": format!("Device UDID is missing.") })),
             ));
         }
@@ -343,51 +328,185 @@ async fn sign_handler(
         ));
     }
 
-    let file_bytes = match file_bytes {
-        Some(f) => f,
-        None => {
-            return Err((
+    let upload_id = Uuid::new_v4().to_string();
+    let chunk_path = config.work_path.join("chunks").join(&upload_id);
+
+    fs::create_dir_all(&chunk_path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "message": format!("Unable to create chunks dir: {}", e) })),
+        )
+    })?;
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({ "upload_id": upload_id })),
+    ))
+}
+
+async fn upload_chunk_handler(
+    Extension(config): Extension<Config>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let mut upload_id = None;
+    let mut chunk_index = None;
+    let mut file_bytes = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "message": format!("Error reading multipart field: {}", e) })),
+        )
+    })? {
+        let name = field.name().map(|n| n.to_string()).ok_or_else(|| {
+            (
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "message": "No file uploaded." })),
-            ));
+                Json(json!({ "message": format!("Multipart field without name") })),
+            )
+        })?;
+
+        if name == "upload_id" {
+            let text = field.text().await.unwrap_or_default();
+            upload_id = Some(text);
+        } else if name == "chunk_index" {
+            let text = field.text().await.unwrap_or_default();
+            if let Ok(idx) = text.parse::<usize>() {
+                chunk_index = Some(idx);
+            }
+        } else if name == "file" {
+            let bytes = field.bytes().await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "message": format!("Error reading file field: {}", e) })),
+                )
+            })?;
+            file_bytes = Some(bytes);
         }
+    }
+
+    if upload_id.is_none() || chunk_index.is_none() || file_bytes.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "message": "Missing upload_id, chunk_index, or file." })),
+        ));
+    }
+
+    let upload_id = upload_id.unwrap();
+    let chunk_index = chunk_index.unwrap();
+    let bytes = file_bytes.unwrap();
+
+    let chunk_dir = config.work_path.join("chunks").join(&upload_id);
+    if !chunk_dir.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "message": "Upload session not found." })),
+        ));
+    }
+
+    let chunk_path = chunk_dir.join(format!("{}.part", chunk_index));
+
+    let mut file = fs::File::create(&chunk_path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "message": format!("Unable to save chunk: {}", e) })),
+        )
+    })?;
+
+    file.write_all(&bytes).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "message": format!("Unable to write chunk: {}", e) })),
+        )
+    })?;
+
+    Ok((StatusCode::OK, Json(json!({ "status": "ok" }))))
+}
+
+async fn finish_upload_handler(
+    Extension(config): Extension<Config>,
+    Extension(base_url): Extension<String>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let mut upload_id = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "message": format!("Error reading multipart field: {}", e) })),
+        )
+    })? {
+        let name = field.name().map(|n| n.to_string()).ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "message": format!("Multipart field without name") })),
+            )
+        })?;
+
+        if name == "upload_id" {
+            let text = field.text().await.unwrap_or_default();
+            upload_id = Some(text);
+        }
+    }
+
+    let upload_id = match upload_id {
+        Some(u) => u,
+        None => return Err((StatusCode::BAD_REQUEST, Json(json!({ "message": "Missing upload_id." })))),
     };
 
-    let original_filename = match original_filename {
-        Some(f) => f,
-        None => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "message": "No file uploaded." })),
-            ));
-        }
-    };
+    let chunk_dir = config.work_path.join("chunks").join(&upload_id);
+    if !chunk_dir.exists() {
+        return Err((StatusCode::NOT_FOUND, Json(json!({ "message": "Upload session not found." }))));
+    }
 
-    let sanitized_file_name =
-        original_filename.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
+    let mut chunks = Vec::new();
+    let mut entries = fs::read_dir(&chunk_dir).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "message": format!("Error reading chunks dir: {}", e) })),
+        )
+    })?;
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
+            if let Ok(idx) = stem.parse::<usize>() {
+                chunks.push((idx, entry.path()));
+            }
+        }
+    }
+    chunks.sort_by_key(|k| k.0);
 
     let uuid = Uuid::new_v4();
     let timestamp = chrono::Utc::now().timestamp_millis();
     let ipa_name = format!(
-        "{}_{}_{}_{}.ipa",
-        timestamp, uuid, udid, sanitized_file_name
+        "{}_{}_{}.ipa",
+        timestamp, uuid, upload_id
     );
     let work_ipa_path = config.work_path.join(&ipa_name);
     let output_ipa_path = config.public_path.join(&ipa_name);
 
-    let mut file = fs::File::create(&work_ipa_path).await.map_err(|e| {
+    let mut target_file = fs::File::create(&work_ipa_path).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "message": format!("Unable to save IPA in the server: {}", e) })),
+            Json(json!({ "message": format!("Unable to create work IPA: {}", e) })),
         )
     })?;
 
-    file.write_all(&file_bytes).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "message": format!("Unable to save IPA in the server: {}", e) })),
-        )
-    })?;
+    for (_, chunk_path) in chunks {
+        let mut chunk_file = fs::File::open(&chunk_path).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "message": format!("Unable to open chunk: {}", e) })),
+            )
+        })?;
+        tokio::io::copy(&mut chunk_file, &mut target_file).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "message": format!("Unable to append chunk: {}", e) })),
+            )
+        })?;
+    }
+
+    let _ = fs::remove_dir_all(&chunk_dir).await;
 
     let sign_result = sign_ipa(
         &work_ipa_path,
@@ -397,6 +516,7 @@ async fn sign_handler(
     )
     .await
     .map_err(|e| {
+        let _ = tokio::fs::remove_file(&work_ipa_path);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "message": format!("Unable to sign IPA: {}", e) })),
@@ -419,7 +539,7 @@ async fn sign_handler(
     ))
 }
 
-async fn clean_directories(public_dir: PathBuf) {
+async fn clean_directories(public_dir: PathBuf, work_dir: PathBuf) {
     let mut read_dir = match fs::read_dir(&public_dir).await {
         Ok(rd) => rd,
         Err(e) => {
@@ -437,26 +557,43 @@ async fn clean_directories(public_dir: PathBuf) {
             }
         }
     }
+
+    let chunks_dir = work_dir.join("chunks");
+    if let Ok(mut read_dir) = fs::read_dir(&chunks_dir).await {
+        while let Ok(Some(entry)) = read_dir.next_entry().await {
+            let path = entry.path();
+            if path.is_dir() {
+                match fs::remove_dir_all(&path).await {
+                    Ok(_) => {}
+                    Err(e) => eprintln!("Failed to delete chunks dir {:?}: {}", path, e),
+                }
+            }
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() {
     let config = get_env_paths().expect("Failed to load env config");
+    let _ = fs::create_dir_all(config.work_path.join("chunks")).await;
 
     tokio::spawn({
         let public_path = config.public_path.clone();
+        let work_path = config.work_path.clone();
 
         async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(6 * 60 * 60));
             loop {
                 interval.tick().await;
-                clean_directories(public_path.clone()).await;
+                clean_directories(public_path.clone(), work_path.clone()).await;
             }
         }
     });
 
     let app = Router::new()
-        .route("/sign", post(sign_handler))
+        .route("/upload/init", post(init_upload_handler))
+        .route("/upload/chunk", post(upload_chunk_handler))
+        .route("/upload/finish", post(finish_upload_handler))
         .route(
             "/ota/{bundle_id}/{bundle_version}/{ipa_file_name}",
             get(ota_handler),
