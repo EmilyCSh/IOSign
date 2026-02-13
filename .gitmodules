@@ -1,0 +1,3 @@
+[submodule "deps/zsign"]
+	path = deps/zsign
+	url = https://github.com/EmilyCSh/zsign

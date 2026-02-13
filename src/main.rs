@@ -7,18 +7,21 @@ use axum::{
     routing::{get, post},
 };
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-use regex::Regex;
 use serde_json::json;
 use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;
-use std::process::Stdio;
-use tokio::{fs, io::AsyncWriteExt, process::Command};
+use tokio::{fs, io::AsyncWriteExt};
+use std::ffi::{CString, CStr};
+use libc::{c_char, c_void, free};
+use std::fs::File;
+use zip::ZipArchive;
 use tower_http::{
     services::ServeDir,
     cors::CorsLayer,
 };
+use tempfile::TempDir;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -69,54 +72,76 @@ async fn sign_ipa(
     output_ipa: &PathBuf,
     ota_prov: &PathBuf,
     key: &PathBuf,
+    work_path: &PathBuf
 ) -> Result<SignResult, Box<dyn Error>> {
+    unsafe extern "C" {
+        fn zsign_sign_folder_to_ipa(app_folder: *const c_char, output_ipa: *const c_char, prov_path: *const c_char, key_path: *const c_char, out_bundle_id: *mut *mut c_char, out_bundle_ver: *mut *mut c_char) -> i32;
+    }
+
     if !input_ipa.is_file() {
         return Err(format!("The input IPA file does not exist: {}", input_ipa.display()).into());
     }
 
-    let output = Command::new("/zsign")
-        .arg("-m")
-        .arg(ota_prov.as_os_str())
-        .arg("-k")
-        .arg(key.as_os_str())
-        .arg("-o")
-        .arg(output_ipa.as_os_str())
-        .arg(input_ipa)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await?;
+    let td = TempDir::with_prefix_in(input_ipa, work_path)?;
+    let input_ipa_file = File::open(&input_ipa)?;
+    let mut archive = ZipArchive::new(input_ipa_file)?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined_output = if !stderr.is_empty() {
-        format!("{}\n{}", stdout, stderr)
-    } else {
-        stdout.to_string()
-    };
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
 
-    if !combined_output.contains("Signed OK!") {
-        println!("Zsign error: {}", combined_output);
-        return Err("Sign error".into());
+        if let Some(enclosed) = file.enclosed_name() {
+            let outpath = td.path().join(enclosed);
+
+            if file.name().ends_with('/') {
+                std::fs::create_dir_all(&outpath)?;
+            } else {
+                if let Some(parent) = outpath.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+
+                let mut outfile = File::create(&outpath)?;
+                std::io::copy(&mut file, &mut outfile)?;
+            }
+        }
     }
 
-    let re_bundle_id = Regex::new(r"BundleId:\s*(\S+)").unwrap();
-    let re_bundle_ver = Regex::new(r"BundleVer:\s*(\S+)").unwrap();
+    let c_input = CString::new(td.path().to_path_buf().to_string_lossy().to_string())?;
+    let c_output = CString::new(output_ipa.to_string_lossy().to_string())?;
+    let c_prov = CString::new(ota_prov.to_string_lossy().to_string())?;
+    let c_key = CString::new(key.to_string_lossy().to_string())?;
 
-    let bundle_id = re_bundle_id
-        .captures(&combined_output)
-        .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-        .ok_or("Missing BundleId")?;
+    let mut out_bid: *mut c_char = std::ptr::null_mut();
+    let mut out_bver: *mut c_char = std::ptr::null_mut();
 
-    let bundle_ver = re_bundle_ver
-        .captures(&combined_output)
-        .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-        .ok_or("Missing BundleVer")?;
+    let rc = unsafe {
+        zsign_sign_folder_to_ipa(c_input.as_ptr(), c_output.as_ptr(), c_prov.as_ptr(), c_key.as_ptr(), &mut out_bid, &mut out_bver)
+    };
 
-    Ok(SignResult {
-        bundle_id,
-        bundle_ver,
-    })
+    if rc != 0 {
+        return Err(format!("zsign returned error code {}", rc).into());
+    }
+
+    let bundle_id = if !out_bid.is_null() {
+        unsafe { CStr::from_ptr(out_bid).to_string_lossy().into_owned() }
+    } else {
+        return Err("Missing bundle id or version from zsign".into());
+    };
+
+    let bundle_ver = if !out_bver.is_null() {
+        unsafe { CStr::from_ptr(out_bver).to_string_lossy().into_owned() }
+    } else {
+        return Err("Missing bundle id or version from zsign".into());
+    };
+
+    if !out_bid.is_null() {
+        unsafe { free(out_bid as *mut c_void); }
+    }
+
+    if !out_bver.is_null() {
+        unsafe { free(out_bver as *mut c_void); }
+    }
+
+    Ok(SignResult { bundle_id, bundle_ver })
 }
 
 async fn inject_base_url(mut req: Request, next: Next) -> Response {
@@ -513,6 +538,7 @@ async fn finish_upload_handler(
         &output_ipa_path,
         &config.otaprov_path,
         &config.key_path,
+        &config.work_path
     )
     .await
     .map_err(|e| {

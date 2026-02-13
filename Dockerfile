@@ -1,45 +1,33 @@
-FROM rust:1.87-bookworm AS builder
+FROM rust:1.93-trixie AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        software-properties-common \
         wget \
         gnupg2 \
         ca-certificates \
         git \
         build-essential \
         cmake \
-        zlib1g-dev \
+        libminizip-dev \
         libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/zhlynn/zsign.git
-RUN cd zsign && \
-    git reset --hard 9fd2942fa9dc5fc5ba111526686b0e4a35aff3a9 && \
-    mkdir build && \
-    cd build && \
-    cmake .. && \
-    make
-
-
+WORKDIR /build
 COPY . .
 RUN cargo build --release
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         libssl3 \
-        zlib1g \
-        zip \
-        unzip \
+        minizip \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder zsign/build/zsign /zsign
-COPY --from=builder target/release/iosign /iosign
+COPY --from=builder /build/target/release/iosign /iosign
 
 ENV PORT=3000
 ENV OTAPROV_PATH=/ota.mobileprovision
