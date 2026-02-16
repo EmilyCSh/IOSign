@@ -13,16 +13,20 @@ use std::env;
 use std::error::Error;
 use std::path::PathBuf;
 use tokio::{fs, io::AsyncWriteExt};
-use std::ffi::{CString, CStr};
-use libc::{c_char, c_void, free};
+use std::ffi::{CString, OsStr};
+use libc::c_char;
 use std::fs::File;
 use zip::ZipArchive;
+use zip::write::FileOptions;
 use tower_http::{
     services::ServeDir,
     cors::CorsLayer,
 };
+use std::path;
 use tempfile::TempDir;
 use uuid::Uuid;
+use plist;
+use walkdir::WalkDir;
 
 #[derive(Clone)]
 struct Config {
@@ -67,6 +71,26 @@ struct SignResult {
     bundle_ver: String,
 }
 
+fn is_main_app_info_plist(p: &path::Path) -> bool {
+    if p.file_name() != Some(OsStr::new("Info.plist")) {
+        return false;
+    }
+
+    let mut it = p.iter();
+
+    let Some(c0) = it.next() else { return false; };
+    let Some(c1) = it.next() else { return false; };
+    let Some(c2) = it.next() else { return false; };
+
+    if it.next().is_some() {
+        return false;
+    }
+
+    c0 == OsStr::new("Payload")
+        && c1.to_str().is_some_and(|s| s.ends_with(".app"))
+        && c2 == OsStr::new("Info.plist")
+}
+
 async fn sign_ipa(
     input_ipa: &PathBuf,
     output_ipa: &PathBuf,
@@ -74,8 +98,11 @@ async fn sign_ipa(
     key: &PathBuf,
     work_path: &PathBuf
 ) -> Result<SignResult, Box<dyn Error>> {
+    let mut bundle_id : Option<String> = None;
+    let mut bundle_ver : Option<String> = None;
+
     unsafe extern "C" {
-        fn zsign_sign_folder_to_ipa(app_folder: *const c_char, output_ipa: *const c_char, prov_path: *const c_char, key_path: *const c_char, out_bundle_id: *mut *mut c_char, out_bundle_ver: *mut *mut c_char) -> i32;
+        fn zsign_sign_folder_to_ipa(app_folder: *const c_char, prov_path: *const c_char, key_path: *const c_char) -> i32;
     }
 
     if !input_ipa.is_file() {
@@ -85,12 +112,19 @@ async fn sign_ipa(
     let td = TempDir::with_prefix_in(input_ipa, work_path)?;
     let input_ipa_file = File::open(&input_ipa)?;
     let mut archive = ZipArchive::new(input_ipa_file)?;
+    let mut app_path: Option<PathBuf> = None;
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
 
         if let Some(enclosed) = file.enclosed_name() {
             let outpath = td.path().join(enclosed);
+
+            if !file.is_dir() && is_main_app_info_plist(enclosed) {
+                if let Some(parent) = outpath.parent() {
+                    app_path = Some(outpath.join(parent.to_path_buf()));
+                }
+            }
 
             if file.name().ends_with('/') {
                 std::fs::create_dir_all(&outpath)?;
@@ -105,41 +139,60 @@ async fn sign_ipa(
         }
     }
 
+    let app_path = app_path.expect("IPA does not contain a valid app bundle with Info.plist");
+
+    if let Ok(info) = plist::Value::from_file(app_path.join("Info.plist")) {
+        if let Some((id, ver)) = info.as_dictionary().and_then(|dict| {
+            Some((
+                dict.get("CFBundleIdentifier")?.as_string()?.to_owned(),
+                dict.get("CFBundleVersion")?.as_string()?.to_owned(),
+            ))
+        }) {
+            bundle_id = Some(id);
+            bundle_ver = Some(ver);
+        }
+    }
+
+    let bundle_id = bundle_id.expect("Failed to extract bundle identifier from Info.plist");
+    let bundle_ver = bundle_ver.expect("Failed to extract bundle version from Info.plist");
+
     let c_input = CString::new(td.path().to_path_buf().to_string_lossy().to_string())?;
-    let c_output = CString::new(output_ipa.to_string_lossy().to_string())?;
     let c_prov = CString::new(ota_prov.to_string_lossy().to_string())?;
     let c_key = CString::new(key.to_string_lossy().to_string())?;
 
-    let mut out_bid: *mut c_char = std::ptr::null_mut();
-    let mut out_bver: *mut c_char = std::ptr::null_mut();
-
     let rc = unsafe {
-        zsign_sign_folder_to_ipa(c_input.as_ptr(), c_output.as_ptr(), c_prov.as_ptr(), c_key.as_ptr(), &mut out_bid, &mut out_bver)
+        zsign_sign_folder_to_ipa(c_input.as_ptr(), c_prov.as_ptr(), c_key.as_ptr())
     };
 
     if rc != 0 {
         return Err(format!("zsign returned error code {}", rc).into());
     }
 
-    let bundle_id = if !out_bid.is_null() {
-        unsafe { CStr::from_ptr(out_bid).to_string_lossy().into_owned() }
-    } else {
-        return Err("Missing bundle id or version from zsign".into());
-    };
+    let output_ipa_file = File::create(output_ipa)?;
+    let mut output_ipa_zip = zip::ZipWriter::new(output_ipa_file);
+    let zip_options = FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(9));
 
-    let bundle_ver = if !out_bver.is_null() {
-        unsafe { CStr::from_ptr(out_bver).to_string_lossy().into_owned() }
-    } else {
-        return Err("Missing bundle id or version from zsign".into());
-    };
+    for entry in WalkDir::new(td.path()).follow_links(false) {
+        let entry = entry?;
+        let p = entry.path().to_path_buf();
+        let rel = p.strip_prefix(td.path())?;
+        let name = rel.to_string_lossy().replace("\\", "/");
 
-    if !out_bid.is_null() {
-        unsafe { free(out_bid as *mut c_void); }
+        if p.is_dir() {
+            if name.is_empty() { continue; }
+            let dir_name = if name.ends_with('/') { name.clone() } else { format!("{}/", name) };
+            output_ipa_zip.add_directory(dir_name, zip_options)?;
+        } else {
+            let f = File::open(&p)?;
+            let mut br = std::io::BufReader::new(f);
+            output_ipa_zip.start_file(name, zip_options)?;
+            std::io::copy(&mut br, &mut output_ipa_zip)?;
+        }
     }
 
-    if !out_bver.is_null() {
-        unsafe { free(out_bver as *mut c_void); }
-    }
+    output_ipa_zip.finish()?;
 
     Ok(SignResult { bundle_id, bundle_ver })
 }
