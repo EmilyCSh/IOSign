@@ -651,6 +651,18 @@ async fn clean_directories(public_dir: PathBuf, work_dir: PathBuf) {
     }
 }
 
+async fn shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
+
+    tokio::select! {
+        _ = sigterm.recv() => {},
+        _ = sigint.recv() => {},
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let config = get_env_paths().expect("Failed to load env config");
@@ -690,5 +702,8 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(":::".to_owned() + &config.port)
         .await
         .unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .unwrap();
 }
